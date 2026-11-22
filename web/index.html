@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+<title>Sturmsegel</title>
+<style>
+:root{--night:#13203a;--paper:#f4ecdc;--brass:#e3a948;--wind:#7fe0d2;--muted:#aeb9cb}
+html,body,#canvas{margin:0;padding:0;border:0}
+html,body{height:100%;background:var(--night);color:var(--paper)}
+body{overflow:hidden;touch-action:none;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+#canvas{display:block;width:100vw;height:100vh}
+#canvas:focus{outline:none}
+#status{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;text-align:center;
+background:radial-gradient(ellipse at 50% 30%,#2a4f86 0%,#13203a 65%)}
+#status h1{margin:0;font-size:clamp(34px,8vw,56px);color:var(--brass);letter-spacing:.04em}
+#status p{margin:0;color:var(--muted);font-size:15px;max-width:440px}
+#bar{width:min(420px,80vw);height:8px;border-radius:4px;background:rgba(255,255,255,.12);overflow:hidden}
+#fill{height:100%;width:0;background:var(--wind);transition:width .2s}
+#notice{display:none;background:#5b3943;border:1px solid #9b3943;border-radius:8px;padding:12px 16px;max-width:480px}
+</style>
+</head>
+<body>
+<canvas id="canvas">Dein Browser kann kein Canvas.</canvas>
+<div id="status">
+  <h1>Sturmsegel</h1>
+  <p id="msg">Die Möwe wird aufgetakelt …</p>
+  <div id="bar"><div id="fill"></div></div>
+  <div id="notice"></div>
+</div>
+<script>
+// Engine und Spieldaten liegen gepackt bei (engine.wasm, spieldaten.wasm) und werden beim Laden entpackt.
+(function(){
+  const WASM_SIZE = 35376909;
+  const MAP = {'index.wasm': 'engine.wasm', 'index.pck': 'spieldaten.wasm'};
+  const origFetch = window.fetch.bind(window);
+  function unpack(r, name){
+    // Prüft die ersten Bytes: gzip wird entpackt, sonst unverändert weitergereicht
+    const reader = r.body.getReader();
+    return reader.read().then(function(first){
+      const head = first.value || new Uint8Array(0);
+      const gz = head.length > 1 && head[0] === 0x1f && head[1] === 0x8b;
+      let stream = new ReadableStream({
+        start(c){ if (!first.done) c.enqueue(head); else c.close(); },
+        pull(c){ return reader.read().then(function(x){ if (x.done) c.close(); else c.enqueue(x.value); }); }
+      });
+      if (gz) stream = stream.pipeThrough(new DecompressionStream('gzip'));
+      const h = {'Content-Type': name === 'index.wasm' ? 'application/wasm' : 'application/octet-stream'};
+      if (name === 'index.wasm') h['Content-Length'] = String(WASM_SIZE);
+      return new Response(stream, {status: 200, headers: h});
+    });
+  }
+  window.fetch = function(input, init){
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    for (const k in MAP) {
+      if (url.split('?')[0].endsWith(k)) {
+        return origFetch(url.replace(k, MAP[k]), init).then(function(r){ return r.ok ? unpack(r, k) : r; });
+      }
+    }
+    return origFetch(input, init);
+  };
+})();
+</script>
+<script src="index.js"></script>
+<script>
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":1302656,"index.wasm":35376909},"focusCanvas":true,"gdextensionLibs":[]};
+const engine = new Engine(GODOT_CONFIG);
+(function(){
+  const status = document.getElementById('status'), fill = document.getElementById('fill');
+  const notice = document.getElementById('notice'), msg = document.getElementById('msg');
+  function fail(err){
+    console.error(err);
+    notice.textContent = 'Das Spiel konnte nicht starten: ' + (err && err.message ? err.message : String(err));
+    notice.style.display = 'block'; msg.style.display = 'none';
+  }
+  if (!('DecompressionStream' in window)) { fail(new Error('Dieser Browser ist zu alt. Bitte Chrome, Edge, Firefox oder Safari ab Version 16.4 verwenden.')); return; }
+  const missing = Engine.getMissingFeatures({threads: false});
+  if (missing.length) { fail(new Error('Es fehlen Browserfunktionen: ' + missing.join(', '))); return; }
+  engine.startGame({
+    onProgress: function(cur, total){ if (cur > 0 && total > 0) fill.style.width = (100 * cur / total).toFixed(1) + '%'; }
+  }).then(function(){ status.remove(); }, fail);
+})();
+</script>
+</body>
+</html>
